@@ -1,6 +1,7 @@
 streamlit==1.61.1
 transformers==5.15.0
 torch==2.13.0
+torchvision==0.28.0
 pillow==12.2.0
 pandas==3.0.5
 numpy==2.5.0
