@@ -1,4 +1,3 @@
-import numpy as np
 import pandas as pd
 import streamlit as st
 import torch
@@ -54,32 +53,13 @@ def check_exif(raw_image):
     return tags, "Some metadata found, but no camera make/model."
 
 
-def classify_and_explain(image):
+def classify(image):
     processor, model = load_model()
     inputs = processor(images=image, return_tensors="pt")
-    pixel_values = inputs["pixel_values"]
-    pixel_values.requires_grad_(True)
-
-    out = model(pixel_values=pixel_values)
-    artificial_idx = [k for k, v in model.config.id2label.items() if v.lower() == "artificial"][0]
-    logits = out.logits[0]
-    score = torch.softmax(logits, dim=0)[artificial_idx]
-
-    model.zero_grad()
-    score.backward()
-
-    saliency = pixel_values.grad.abs().sum(dim=1).squeeze().detach().numpy()
-    saliency = (saliency - saliency.min()) / (saliency.max() - saliency.min() + 1e-8)
-    return score.item(), saliency
-
-
-def overlay_heatmap(image, saliency):
-    base = image.resize((saliency.shape[1], saliency.shape[0]))
-    base_arr = np.array(base).astype(np.float32)
-    heat = np.zeros_like(base_arr)
-    heat[..., 0] = saliency * 255
-    overlay = (base_arr * 0.6 + heat * 0.4).clip(0, 255).astype(np.uint8)
-    return Image.fromarray(overlay)
+    with torch.no_grad():
+        logits = model(**inputs).logits[0]
+    probs = torch.softmax(logits, dim=0)
+    return {model.config.id2label[i].lower(): probs[i].item() for i in range(len(probs))}
 
 
 if "history" not in st.session_state:
@@ -101,24 +81,25 @@ if uploaded_files:
         image = raw_image.convert("RGB")
 
         with st.spinner("Analyzing..."):
-            score, saliency = classify_and_explain(image)
-            heatmap_image = overlay_heatmap(image, saliency)
+            probs = classify(image)
 
-        col1, col2 = st.columns(2)
-        with col1:
-            st.image(image, caption="Uploaded image", width="stretch")
-        with col2:
-            st.image(heatmap_image, caption="Saliency heatmap (red = most influenced prediction)", width="stretch")
+        st.image(image, caption="Uploaded image", width="stretch")
 
-        verdict = "artificial" if score > 0.5 else "real"
-        st.write(f"**Verdict: {verdict}** ({score:.1%} artificial-likelihood)")
+        artificial_score = probs.get("artificial", 0.0)
+        verdict = "artificial" if artificial_score > 0.5 else "real"
+        st.write(f"**Verdict: {verdict}**")
+
+        st.subheader("Probability breakdown")
+        for label, p in sorted(probs.items(), key=lambda x: x[1], reverse=True):
+            st.write(f"{label}: {p:.1%}")
+            st.progress(p)
 
         st.info(exif_note)
 
         st.session_state.history.append({
             "file": uploaded_file.name,
             "verdict": verdict,
-            "artificial_score": round(score, 3),
+            **{label: round(p, 3) for label, p in probs.items()},
             "exif_present": bool(exif_tags),
         })
 
