@@ -6,6 +6,7 @@ from transformers import AutoImageProcessor, AutoModelForImageClassification
 
 st.write("""
 # AI-Generated Image Detector
+Created by Nabeel
 
 Upload image
 """)
